@@ -3,6 +3,7 @@ using ColossalFramework.Math;
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using System.Text.RegularExpressions;
 
 namespace MoveIt
 {
@@ -200,35 +201,42 @@ namespace MoveIt
                             int count = 0;
                             while (segment != 0u)
                             {
-                                if (stepOver.isValidS(segment) && IsSegmentValid(ref segmentBuffer[segment], itemLayers) &&
-                                            segmentBuffer[segment].RayCast(segment, ray, -1000f, false, out float t, out float priority) && t < smallestDist)
+                                if (stepOver.isValidS(segment) && IsSegmentValid(ref segmentBuffer[segment], itemLayers))
                                 {
-                                    ushort building = 0;
-                                    if (!Event.current.alt)
+                                    bool isMasked = false;
+                                    if (IsCSUR(segmentBuffer[segment].Info))
                                     {
-                                        building = FindOwnerBuilding(segment, 363f);
+                                        isMasked = GetRayCastMask(segmentBuffer[segment], segment, ray, -1000f, false, out float t2, out float priority2);
                                     }
-
-                                    if (building != 0)
+                                    if (!isMasked && segmentBuffer[segment].RayCast(segment, ray, -1000f, false, out float t, out float priority) && t < smallestDist)
                                     {
-                                        if (selectBuilding)
+                                        ushort building = 0;
+                                        if (!Event.current.alt)
                                         {
-                                            id.Building = Building.FindParentBuilding(building);
-                                            if (id.Building == 0) id.Building = building;
-                                            smallestDist = t;
+                                            building = FindOwnerBuilding(segment, 363f);
                                         }
-                                    }
-                                    else if (selectSegments || (selectPicker && Filters.Picker.IsSegment))
-                                    {
-                                        if (!selectNodes || (
-                                            (!stepOver.isValidN(segmentBuffer[segment].m_startNode) || !RayCastNode(ref nodeBuffer[segmentBuffer[segment].m_startNode], ray, -1000f, out float t2, out priority)) &&
-                                            (!stepOver.isValidN(segmentBuffer[segment].m_endNode) || !RayCastNode(ref nodeBuffer[segmentBuffer[segment].m_endNode], ray, -1000f, out t2, out priority))
-                                        ))
+
+                                        if (building != 0)
                                         {
-                                            if (Filters.Filter(segmentBuffer[segment]))
+                                            if (selectBuilding)
                                             {
-                                                id.NetSegment = segment;
+                                                id.Building = Building.FindParentBuilding(building);
+                                                if (id.Building == 0) id.Building = building;
                                                 smallestDist = t;
+                                            }
+                                        }
+                                        else if (selectSegments || (selectPicker && Filters.Picker.IsSegment))
+                                        {
+                                            if (!selectNodes || (
+                                                (!stepOver.isValidN(segmentBuffer[segment].m_startNode) || !RayCastNode(ref nodeBuffer[segmentBuffer[segment].m_startNode], ray, -1000f, out float t2, out priority)) &&
+                                                (!stepOver.isValidN(segmentBuffer[segment].m_endNode) || !RayCastNode(ref nodeBuffer[segmentBuffer[segment].m_endNode], ray, -1000f, out t2, out priority))
+                                            ))
+                                            {
+                                                if (Filters.Filter(segmentBuffer[segment]))
+                                                {
+                                                    id.NetSegment = segment;
+                                                    smallestDist = t;
+                                                }
                                             }
                                         }
                                     }
@@ -691,5 +699,193 @@ namespace MoveIt
             priority = 0f;
             return false;
         }
+
+        // NON-STOCK CODE STARTS
+
+        private const string CSUR_REGEX = "CSUR(-(T|R|S))? ([[1-9]?[0-9]D?(L|S|C|R)[1-9]*P?)+(=|-)?([[1-9]?[0-9]D?(L|S|C|R)[1-9]*P?)*";
+        public static bool IsCSUR(NetInfo asset)
+        {
+            if (asset == null || asset.m_netAI.GetType() != typeof(RoadAI))
+            {
+                return false;
+            }
+            string savenameStripped = asset.name.Substring(asset.name.IndexOf('.') + 1);
+            Match m = Regex.Match(savenameStripped, CSUR_REGEX, RegexOptions.IgnoreCase);
+            return m.Success;
+        }
+
+        public static bool GetRayCastMask(NetSegment mysegment, ushort segmentID, Segment3 ray, float snapElevation, bool nameOnly, out float t, out float priority)
+        {
+            NetInfo info = mysegment.Info;
+            t = 0f;
+            priority = 0f;
+            if (nameOnly && (mysegment.m_flags & NetSegment.Flags.NameVisible2) == 0)
+            {
+                return false;
+            }
+            Bounds bounds = mysegment.m_bounds;
+            bounds.Expand(16f);
+            if (!bounds.IntersectRay(new Ray(ray.a, ray.b - ray.a)))
+            {
+                return false;
+            }
+            NetManager instance = Singleton<NetManager>.instance;
+            Bezier3 bezier = default(Bezier3);
+            bezier.a = instance.m_nodes.m_buffer[mysegment.m_startNode].m_position;
+            bezier.d = instance.m_nodes.m_buffer[mysegment.m_endNode].m_position;
+            bool result = false;
+            if (nameOnly)
+            {
+                RenderManager instance2 = Singleton<RenderManager>.instance;
+                if (instance2.GetInstanceIndex((uint)(49152 + segmentID), out uint instanceIndex))
+                {
+                    InstanceManager.NameData nameData = instance2.m_instances[instanceIndex].m_nameData;
+                    Vector3 position = instance2.m_instances[instanceIndex].m_position;
+                    Matrix4x4 dataMatrix = instance2.m_instances[instanceIndex].m_dataMatrix2;
+                    float num = Vector3.Distance(position, ray.a);
+                    if (nameData != null && num < 1000f)
+                    {
+                        float snapElevation2 = info.m_netAI.GetSnapElevation();
+                        bezier.a.y += snapElevation2;
+                        bezier.d.y += snapElevation2;
+                        NetSegment.CalculateMiddlePoints(bezier.a, mysegment.m_startDirection, bezier.d, mysegment.m_endDirection, smoothStart: true, smoothEnd: true, out bezier.b, out bezier.c);
+                        float num2 = Mathf.Max(1f, Mathf.Abs(dataMatrix.m33 - dataMatrix.m30));
+                        float d = num * 0.0002f + 0.05f / (1f + num * 0.001f);
+                        Vector2 vector = nameData.m_size * d;
+                        float t2 = Mathf.Max(0f, 0.5f - vector.x / num2 * 0.5f);
+                        float t3 = Mathf.Min(1f, 0.5f + vector.x / num2 * 0.5f);
+                        bezier = bezier.Cut(t2, t3);
+                        float num3 = bezier.DistanceSqr(ray, out float u, out float _);
+                        if (num3 < vector.y * vector.y * 0.25f)
+                        {
+                            Vector3 b = bezier.Position(u);
+                            if (Segment1.Intersect(ray.a.y, ray.b.y, b.y, out u))
+                            {
+                                num3 = Vector3.SqrMagnitude(ray.Position(u) - b);
+                                if (num3 < vector.y * vector.y * 0.25f)
+                                {
+                                    t = u;
+                                    result = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                info.m_netAI.GetRayCastHeights(segmentID, ref mysegment, out float leftMin, out float rightMin, out float max);
+                bezier.a.y += max;
+                bezier.d.y += max;
+                bool flag = (instance.m_nodes.m_buffer[mysegment.m_startNode].m_flags & NetNode.Flags.Middle) != 0;
+                bool flag2 = (instance.m_nodes.m_buffer[mysegment.m_endNode].m_flags & NetNode.Flags.Middle) != 0;
+                NetSegment.CalculateMiddlePoints(bezier.a, mysegment.m_startDirection, bezier.d, mysegment.m_endDirection, flag, flag2, out bezier.b, out bezier.c);
+                float minNodeDistance = info.GetMinNodeDistance();
+                // THIS IS THE HALF WIDTH OF EMPTY SPACE
+                float collisionHalfWidth = 5;
+                //
+                float num4 = (int)instance.m_nodes.m_buffer[mysegment.m_startNode].m_elevation;
+                float num5 = (int)instance.m_nodes.m_buffer[mysegment.m_endNode].m_elevation;
+                if (info.m_netAI.IsUnderground())
+                {
+                    num4 = 0f - num4;
+                    num5 = 0f - num5;
+                }
+                num4 += info.m_netAI.GetSnapElevation();
+                num5 += info.m_netAI.GetSnapElevation();
+                float a = Mathf.Lerp(minNodeDistance, collisionHalfWidth, Mathf.Clamp01(Mathf.Abs(snapElevation - num4) / 12f));
+                float b2 = Mathf.Lerp(minNodeDistance, collisionHalfWidth, Mathf.Clamp01(Mathf.Abs(snapElevation - num5) / 12f));
+                float num6 = Mathf.Min(leftMin, rightMin);
+                t = 1000000f;
+                priority = 1000000f;
+                Segment3 segment = default(Segment3);
+                segment.a = bezier.a;
+                Segment2 segment2 = default(Segment2);
+                for (int i = 1; i <= 16; i++)
+                {
+                    segment.b = bezier.Position((float)i / 16f);
+                    float num7 = ray.DistanceSqr(segment, out float u2, out float v2);
+                    float num8 = Mathf.Lerp(a, b2, ((float)(i - 1) + v2) / 16f);
+                    Vector3 vector2 = segment.Position(v2);
+                    if (num7 < priority && Segment1.Intersect(ray.a.y, ray.b.y, vector2.y, out u2))
+                    {
+                        Vector3 vector3 = ray.Position(u2);
+                        num7 = Vector3.SqrMagnitude(vector3 - vector2);
+                        if (num7 < priority && num7 < num8 * num8)
+                        {
+                            if (flag && i == 1 && v2 < 0.001f)
+                            {
+                                Vector3 rhs = segment.a - segment.b;
+                                u2 += Mathf.Max(0f, Vector3.Dot(vector3, rhs)) / Mathf.Max(0.001f, Mathf.Sqrt(rhs.sqrMagnitude * ray.LengthSqr()));
+                            }
+                            if (flag2 && i == 16 && v2 > 0.999f)
+                            {
+                                Vector3 rhs2 = segment.b - segment.a;
+                                u2 += Mathf.Max(0f, Vector3.Dot(vector3, rhs2)) / Mathf.Max(0.001f, Mathf.Sqrt(rhs2.sqrMagnitude * ray.LengthSqr()));
+                            }
+                            priority = num7;
+                            t = u2;
+                            result = true;
+                        }
+                    }
+                    if (num6 < max)
+                    {
+                        float num9 = vector2.y + num6 - max;
+                        if (Mathf.Max(ray.a.y, ray.b.y) > num9 && Mathf.Min(ray.a.y, ray.b.y) < vector2.y)
+                        {
+                            float num10;
+                            if (Segment1.Intersect(ray.a.y, ray.b.y, vector2.y, out u2))
+                            {
+                                segment2.a = VectorUtils.XZ(ray.Position(u2));
+                                num10 = u2;
+                            }
+                            else
+                            {
+                                segment2.a = VectorUtils.XZ(ray.a);
+                                num10 = 0f;
+                            }
+                            float num11;
+                            if (Segment1.Intersect(ray.a.y, ray.b.y, num9, out u2))
+                            {
+                                segment2.b = VectorUtils.XZ(ray.Position(u2));
+                                num11 = u2;
+                            }
+                            else
+                            {
+                                segment2.b = VectorUtils.XZ(ray.b);
+                                num11 = 1f;
+                            }
+                            num7 = segment2.DistanceSqr(VectorUtils.XZ(vector2), out u2);
+                            if (num7 < priority && num7 < num8 * num8)
+                            {
+                                u2 = num10 + (num11 - num10) * u2;
+                                Vector3 lhs = ray.Position(u2);
+                                if (flag && i == 1 && v2 < 0.001f)
+                                {
+                                    Vector3 rhs3 = segment.a - segment.b;
+                                    u2 += Mathf.Max(0f, Vector3.Dot(lhs, rhs3)) / Mathf.Max(0.001f, Mathf.Sqrt(rhs3.sqrMagnitude * ray.LengthSqr()));
+                                }
+                                if (flag2 && i == 16 && v2 > 0.999f)
+                                {
+                                    Vector3 rhs4 = segment.b - segment.a;
+                                    u2 += Mathf.Max(0f, Vector3.Dot(lhs, rhs4)) / Mathf.Max(0.001f, Mathf.Sqrt(rhs4.sqrMagnitude * ray.LengthSqr()));
+                                }
+                                priority = num7;
+                                t = u2;
+                                result = true;
+                            }
+                        }
+                    }
+                    segment.a = segment.b;
+                }
+                priority = Mathf.Max(0f, Mathf.Sqrt(priority) - collisionHalfWidth);
+            }
+            return result;
+        }
+
+        // NON-STOCK CODE ENDS
+
+
     }
+
 }
