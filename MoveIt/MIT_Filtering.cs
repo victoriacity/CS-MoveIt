@@ -160,7 +160,7 @@ namespace MoveIt
                             int count = 0;
                             while (node != 0u)
                             {
-                                if (stepOver.isValidN(node) && IsNodeValid(ref nodeBuffer[node], itemLayers) && RayCastNode(ref nodeBuffer[node], ray, -1000f, out float t, out float priority) && t < smallestDist)
+                                if (stepOver.isValidN(node) && IsNodeValid(ref nodeBuffer[node], itemLayers) && RayCastNode(node, ref nodeBuffer[node], ray, -1000f, out float t, out float priority) && t < smallestDist)
                                 {
                                     ushort building = 0;
                                     if (!Event.current.alt)
@@ -203,12 +203,16 @@ namespace MoveIt
                             {
                                 if (stepOver.isValidS(segment) && IsSegmentValid(ref segmentBuffer[segment], itemLayers))
                                 {
-                                    bool isMasked = false;
-                                    if (IsCSUR(segmentBuffer[segment].Info))
+                                    bool hit;
+                                    float t, priority;
+                                    if (IsCSUROffset(segmentBuffer[segment].Info.m_netAI.m_info))
                                     {
-                                        isMasked = GetRayCastMask(segmentBuffer[segment], segment, ray, -1000f, false, out float t2, out float priority2);
+                                        hit = NetSegmentRayCastMasked(segmentBuffer[segment], segment, ray, -1000f, false, out t, out priority);
+                                    } else
+                                    {
+                                        hit = segmentBuffer[segment].RayCast(segment, ray, -1000f, false, out t, out priority);
                                     }
-                                    if (!isMasked && segmentBuffer[segment].RayCast(segment, ray, -1000f, false, out float t, out float priority) && t < smallestDist)
+                                    if (hit && t < smallestDist)
                                     {
                                         ushort building = 0;
                                         if (!Event.current.alt)
@@ -228,8 +232,8 @@ namespace MoveIt
                                         else if (selectSegments || (selectPicker && Filters.Picker.IsSegment))
                                         {
                                             if (!selectNodes || (
-                                                (!stepOver.isValidN(segmentBuffer[segment].m_startNode) || !RayCastNode(ref nodeBuffer[segmentBuffer[segment].m_startNode], ray, -1000f, out float t2, out priority)) &&
-                                                (!stepOver.isValidN(segmentBuffer[segment].m_endNode) || !RayCastNode(ref nodeBuffer[segmentBuffer[segment].m_endNode], ray, -1000f, out t2, out priority))
+                                                (!stepOver.isValidN(segmentBuffer[segment].m_startNode) || !RayCastNode(segmentBuffer[segment].m_startNode, ref nodeBuffer[segmentBuffer[segment].m_startNode], ray, -1000f, out float t2, out priority)) &&
+                                                (!stepOver.isValidN(segmentBuffer[segment].m_endNode) || !RayCastNode(segmentBuffer[segment].m_endNode, ref nodeBuffer[segmentBuffer[segment].m_endNode], ray, -1000f, out t2, out priority))
                                             ))
                                             {
                                                 if (Filters.Filter(segmentBuffer[segment]))
@@ -671,9 +675,15 @@ namespace MoveIt
             return false;
         }
 
-        private static bool RayCastNode(ref NetNode node, Segment3 ray, float snapElevation, out float t, out float priority)
+        private static bool RayCastNode(ushort nodeid, ref NetNode node, Segment3 ray, float snapElevation, out float t, out float priority)
         {
             NetInfo info = node.Info;
+            // NON-STOCK CODE STARTS
+            if (IsCSUROffset(info.m_netAI.m_info))
+            {
+                return RayCastNodeMasked(nodeid, ref node, ray, snapElevation, false, out t, out priority);
+            }
+            // NON-STOCK CODE ENDS
             float num = (float)node.m_elevation + info.m_netAI.GetSnapElevation();
             float t2;
             if (info.m_netAI.IsUnderground())
@@ -703,6 +713,8 @@ namespace MoveIt
         // NON-STOCK CODE STARTS
 
         private const string CSUR_REGEX = "CSUR(-(T|R|S))? ([[1-9]?[0-9]D?(L|S|C|R)[1-9]*P?)+(=|-)?([[1-9]?[0-9]D?(L|S|C|R)[1-9]*P?)*";
+        private const string CSUR_OFFSET_REGEX = "CSUR(-(T|R|S))? ([[1-9]?[0-9](L|R)[1-9]*P?)+(=|-)?([[1-9]?[0-9](L|R)[1-9]*P?)*";
+
         public static bool IsCSUR(NetInfo asset)
         {
             if (asset == null || asset.m_netAI.GetType() != typeof(RoadAI))
@@ -714,15 +726,96 @@ namespace MoveIt
             return m.Success;
         }
 
-        public static bool GetRayCastMask(NetSegment mysegment, ushort segmentID, Segment3 ray, float snapElevation, bool nameOnly, out float t, out float priority)
+        public static bool IsCSUROffset(NetInfo asset)
         {
-            NetInfo info = mysegment.Info;
-            t = 0f;
-            priority = 0f;
-            if (nameOnly && (mysegment.m_flags & NetSegment.Flags.NameVisible2) == 0)
+            if (asset == null || asset.m_netAI.GetType() != typeof(RoadAI))
             {
                 return false;
             }
+            string savenameStripped = asset.name.Substring(asset.name.IndexOf('.') + 1);
+            Match m = Regex.Match(savenameStripped, CSUR_OFFSET_REGEX, RegexOptions.IgnoreCase);
+            return m.Success;
+        }
+
+        private static bool RayCastNodeMasked(ushort nodeid, ref NetNode node, Segment3 ray, float snapElevation, bool bothSides, out float t, out float priority)
+        {
+            bool lht = false;
+            //if (SimulationManager.instance.m_metaData.m_invertTraffic == SimulationMetaData.MetaBool.True) lht = true;
+            NetInfo info = node.Info;
+            float num = (float)node.m_elevation + info.m_netAI.GetSnapElevation();
+            float t2;
+            if (info.m_netAI.IsUnderground())
+            {
+                t2 = Mathf.Clamp01(Mathf.Abs(snapElevation + num) / 12f);
+            }
+            else
+            {
+                t2 = Mathf.Clamp01(Mathf.Abs(snapElevation - num) / 12f);
+            }
+            float collisionHalfWidth = Mathf.Max(3f, info.m_halfWidth);
+            float maskHalfWidth = Mathf.Min(collisionHalfWidth - 1.5f, info.m_pavementWidth);
+            float num2 = Mathf.Lerp(info.GetMinNodeDistance(), collisionHalfWidth, t2);
+            float num2m = Mathf.Lerp(info.GetMinNodeDistance(), maskHalfWidth, t2);
+            float num2delta = Mathf.Lerp(info.GetMinNodeDistance(), collisionHalfWidth - maskHalfWidth, t2);
+            if (node.CountSegments() <= 2)
+            {
+                NetManager instance = Singleton<NetManager>.instance;
+                NetSegment mysegment = instance.m_segments.m_buffer[node.m_segment0];
+                Vector3 direction = mysegment.m_startNode == nodeid ? mysegment.m_startDirection : -mysegment.m_endDirection;
+                Debug.Log(direction);
+                if ((mysegment.m_flags & NetSegment.Flags.Invert) != 0) lht = true;
+                // normal to the right hand side
+                Vector3 normal = new Vector3(direction.z, 0, -direction.x).normalized;
+                Vector3 trueNodeCenter = node.m_position + (lht ? -collisionHalfWidth : collisionHalfWidth) * normal;
+                Debug.Log($"num2: {num2}, num2m: {num2m}");
+                Debug.Log($"node: {node.m_position}, center: {trueNodeCenter}");
+                if (Segment1.Intersect(ray.a.y, ray.b.y, node.m_position.y, out t))
+                {
+                    float num3 = Vector3.Distance(ray.Position(t), trueNodeCenter);
+                    if (num3 < num2delta)
+                    {
+                        priority = Mathf.Max(0f, num3 - collisionHalfWidth);
+                        return true;
+                    }
+                }
+
+            } else
+            {
+                if (Segment1.Intersect(ray.a.y, ray.b.y, node.m_position.y, out t))
+                {
+                    float num3 = Vector3.Distance(ray.Position(t), node.m_position);
+                    if (num3 < num2)
+                    {
+                        priority = Mathf.Max(0f, num3 - collisionHalfWidth);
+                        return true;
+                    }
+                }
+            }
+            t = 0f;
+            priority = 0f;
+            return false;
+        }
+
+        public static bool IsTrafficHandSideOf(Segment3 segment, Segment3 ray, float tRay, bool invert)
+        {
+            Vector3 segmentVector = segment.b - segment.a;
+            Vector3 rayVector = ray.Position(tRay) - segment.a;
+           // Debug.Log($"startnode->endnode: {segmentVector}, startnode->ray: {rayVector}");
+            float crossProduct = rayVector.x * segmentVector.z - segmentVector.x * rayVector.z;
+           // Debug.Log($"cross product: {crossProduct}");
+            return invert? crossProduct < 0 : crossProduct > 0;
+        }
+
+        public static bool NetSegmentRayCastMasked(NetSegment mysegment, ushort segmentID, Segment3 ray, float snapElevation, bool bothSides, out float t, out float priority)
+        {
+            bool lht = false;
+            //if (SimulationManager.instance.m_metaData.m_invertTraffic == SimulationMetaData.MetaBool.True) lht = true;
+            Debug.Log(mysegment.m_flags);
+            if ((mysegment.m_flags & NetSegment.Flags.Invert) != 0) lht = true;
+            bool isMasked = false;
+            NetInfo info = mysegment.Info;
+            t = 0f;
+            priority = 0f;
             Bounds bounds = mysegment.m_bounds;
             bounds.Expand(16f);
             if (!bounds.IntersectRay(new Ray(ray.a, ray.b - ray.a)))
@@ -734,152 +827,125 @@ namespace MoveIt
             bezier.a = instance.m_nodes.m_buffer[mysegment.m_startNode].m_position;
             bezier.d = instance.m_nodes.m_buffer[mysegment.m_endNode].m_position;
             bool result = false;
-            if (nameOnly)
+
+            info.m_netAI.GetRayCastHeights(segmentID, ref mysegment, out float leftMin, out float rightMin, out float max);
+            bezier.a.y += max;
+            bezier.d.y += max;
+            bool flag = (instance.m_nodes.m_buffer[mysegment.m_startNode].m_flags & NetNode.Flags.Middle) != 0;
+            bool flag2 = (instance.m_nodes.m_buffer[mysegment.m_endNode].m_flags & NetNode.Flags.Middle) != 0;
+            NetSegment.CalculateMiddlePoints(bezier.a, mysegment.m_startDirection, bezier.d, mysegment.m_endDirection, flag, flag2, out bezier.b, out bezier.c);
+            float minNodeDistance = info.GetMinNodeDistance();
+            // 
+            float collisionHalfWidth = info.m_halfWidth;
+            float maskHalfWidth = info.m_pavementWidth;
+            //
+            float num4 = (int)instance.m_nodes.m_buffer[mysegment.m_startNode].m_elevation;
+            float num5 = (int)instance.m_nodes.m_buffer[mysegment.m_endNode].m_elevation;
+            if (info.m_netAI.IsUnderground())
             {
-                RenderManager instance2 = Singleton<RenderManager>.instance;
-                if (instance2.GetInstanceIndex((uint)(49152 + segmentID), out uint instanceIndex))
+                num4 = 0f - num4;
+                num5 = 0f - num5;
+            }
+            num4 += info.m_netAI.GetSnapElevation();
+            num5 += info.m_netAI.GetSnapElevation();
+            float a = Mathf.Lerp(minNodeDistance, collisionHalfWidth, Mathf.Clamp01(Mathf.Abs(snapElevation - num4) / 12f));
+            float b2 = Mathf.Lerp(minNodeDistance, collisionHalfWidth, Mathf.Clamp01(Mathf.Abs(snapElevation - num5) / 12f));
+            float am = Mathf.Lerp(minNodeDistance, maskHalfWidth, Mathf.Clamp01(Mathf.Abs(snapElevation - num4) / 12f));
+            float b2m = Mathf.Lerp(minNodeDistance, maskHalfWidth, Mathf.Clamp01(Mathf.Abs(snapElevation - num5) / 12f));
+            float num6 = Mathf.Min(leftMin, rightMin);
+            t = 1000000f;
+            priority = 1000000f;
+            Segment3 segment = default(Segment3);
+            segment.a = bezier.a;
+            Segment2 segment2 = default(Segment2);
+            Debug.Log($"mouse ray: {ray.a} --> {ray.b}");
+            Debug.Log($"segment direction: {bezier.a} --> {bezier.b}");
+            for (int i = 1; i <= 16; i++)
+            {
+                segment.b = bezier.Position((float)i / 16f);
+                float num7 = ray.DistanceSqr(segment, out float u2, out float v2);
+                float num8 = Mathf.Lerp(a, b2, ((float)(i - 1) + v2) / 16f);
+                float num8m = Mathf.Lerp(am, b2m, ((float)(i - 1) + v2) / 16f);
+                Vector3 vector2 = segment.Position(v2);
+                bool atOffsetSide = bothSides || IsTrafficHandSideOf(segment, ray, u2, lht);
+                if (atOffsetSide && num7 < priority && Segment1.Intersect(ray.a.y, ray.b.y, vector2.y, out u2))
                 {
-                    InstanceManager.NameData nameData = instance2.m_instances[instanceIndex].m_nameData;
-                    Vector3 position = instance2.m_instances[instanceIndex].m_position;
-                    Matrix4x4 dataMatrix = instance2.m_instances[instanceIndex].m_dataMatrix2;
-                    float num = Vector3.Distance(position, ray.a);
-                    if (nameData != null && num < 1000f)
+                    Vector3 vector3 = ray.Position(u2);
+                    num7 = Vector3.SqrMagnitude(vector3 - vector2);
+                    //Debug.Log($"num7: {num7}, num8: {num8}, num8m: {num8m}");
+                    if (num7 < priority && num7 < num8 * num8)
                     {
-                        float snapElevation2 = info.m_netAI.GetSnapElevation();
-                        bezier.a.y += snapElevation2;
-                        bezier.d.y += snapElevation2;
-                        NetSegment.CalculateMiddlePoints(bezier.a, mysegment.m_startDirection, bezier.d, mysegment.m_endDirection, smoothStart: true, smoothEnd: true, out bezier.b, out bezier.c);
-                        float num2 = Mathf.Max(1f, Mathf.Abs(dataMatrix.m33 - dataMatrix.m30));
-                        float d = num * 0.0002f + 0.05f / (1f + num * 0.001f);
-                        Vector2 vector = nameData.m_size * d;
-                        float t2 = Mathf.Max(0f, 0.5f - vector.x / num2 * 0.5f);
-                        float t3 = Mathf.Min(1f, 0.5f + vector.x / num2 * 0.5f);
-                        bezier = bezier.Cut(t2, t3);
-                        float num3 = bezier.DistanceSqr(ray, out float u, out float _);
-                        if (num3 < vector.y * vector.y * 0.25f)
+                           
+                        if (flag && i == 1 && v2 < 0.001f)
                         {
-                            Vector3 b = bezier.Position(u);
-                            if (Segment1.Intersect(ray.a.y, ray.b.y, b.y, out u))
-                            {
-                                num3 = Vector3.SqrMagnitude(ray.Position(u) - b);
-                                if (num3 < vector.y * vector.y * 0.25f)
-                                {
-                                    t = u;
-                                    result = true;
-                                }
-                            }
+                            Vector3 rhs = segment.a - segment.b;
+                            u2 += Mathf.Max(0f, Vector3.Dot(vector3, rhs)) / Mathf.Max(0.001f, Mathf.Sqrt(rhs.sqrMagnitude * ray.LengthSqr()));
                         }
+                        if (flag2 && i == 16 && v2 > 0.999f)
+                        {
+                            Vector3 rhs2 = segment.b - segment.a;
+                            u2 += Mathf.Max(0f, Vector3.Dot(vector3, rhs2)) / Mathf.Max(0.001f, Mathf.Sqrt(rhs2.sqrMagnitude * ray.LengthSqr()));
+                        }
+                        priority = num7;
+                        t = u2;
+                        result = true;
+                        if (num7 < num8m * num8m) isMasked = true;
                     }
                 }
-            }
-            else
-            {
-                info.m_netAI.GetRayCastHeights(segmentID, ref mysegment, out float leftMin, out float rightMin, out float max);
-                bezier.a.y += max;
-                bezier.d.y += max;
-                bool flag = (instance.m_nodes.m_buffer[mysegment.m_startNode].m_flags & NetNode.Flags.Middle) != 0;
-                bool flag2 = (instance.m_nodes.m_buffer[mysegment.m_endNode].m_flags & NetNode.Flags.Middle) != 0;
-                NetSegment.CalculateMiddlePoints(bezier.a, mysegment.m_startDirection, bezier.d, mysegment.m_endDirection, flag, flag2, out bezier.b, out bezier.c);
-                float minNodeDistance = info.GetMinNodeDistance();
-                // THIS IS THE HALF WIDTH OF EMPTY SPACE
-                float collisionHalfWidth = 5;
-                //
-                float num4 = (int)instance.m_nodes.m_buffer[mysegment.m_startNode].m_elevation;
-                float num5 = (int)instance.m_nodes.m_buffer[mysegment.m_endNode].m_elevation;
-                if (info.m_netAI.IsUnderground())
+                if (atOffsetSide && num6 < max)
                 {
-                    num4 = 0f - num4;
-                    num5 = 0f - num5;
-                }
-                num4 += info.m_netAI.GetSnapElevation();
-                num5 += info.m_netAI.GetSnapElevation();
-                float a = Mathf.Lerp(minNodeDistance, collisionHalfWidth, Mathf.Clamp01(Mathf.Abs(snapElevation - num4) / 12f));
-                float b2 = Mathf.Lerp(minNodeDistance, collisionHalfWidth, Mathf.Clamp01(Mathf.Abs(snapElevation - num5) / 12f));
-                float num6 = Mathf.Min(leftMin, rightMin);
-                t = 1000000f;
-                priority = 1000000f;
-                Segment3 segment = default(Segment3);
-                segment.a = bezier.a;
-                Segment2 segment2 = default(Segment2);
-                for (int i = 1; i <= 16; i++)
-                {
-                    segment.b = bezier.Position((float)i / 16f);
-                    float num7 = ray.DistanceSqr(segment, out float u2, out float v2);
-                    float num8 = Mathf.Lerp(a, b2, ((float)(i - 1) + v2) / 16f);
-                    Vector3 vector2 = segment.Position(v2);
-                    if (num7 < priority && Segment1.Intersect(ray.a.y, ray.b.y, vector2.y, out u2))
+                    float num9 = vector2.y + num6 - max;
+                    if (Mathf.Max(ray.a.y, ray.b.y) > num9 && Mathf.Min(ray.a.y, ray.b.y) < vector2.y)
                     {
-                        Vector3 vector3 = ray.Position(u2);
-                        num7 = Vector3.SqrMagnitude(vector3 - vector2);
+                        float num10;
+                        if (Segment1.Intersect(ray.a.y, ray.b.y, vector2.y, out u2))
+                        {
+                            segment2.a = VectorUtils.XZ(ray.Position(u2));
+                            num10 = u2;
+                        }
+                        else
+                        {
+                            segment2.a = VectorUtils.XZ(ray.a);
+                            num10 = 0f;
+                        }
+                        float num11;
+                        if (Segment1.Intersect(ray.a.y, ray.b.y, num9, out u2))
+                        {
+                            segment2.b = VectorUtils.XZ(ray.Position(u2));
+                            num11 = u2;
+                        }
+                        else
+                        {
+                            segment2.b = VectorUtils.XZ(ray.b);
+                            num11 = 1f;
+                        }
+                        num7 = segment2.DistanceSqr(VectorUtils.XZ(vector2), out u2);
                         if (num7 < priority && num7 < num8 * num8)
                         {
+                            u2 = num10 + (num11 - num10) * u2;
+                            Vector3 lhs = ray.Position(u2);
                             if (flag && i == 1 && v2 < 0.001f)
                             {
-                                Vector3 rhs = segment.a - segment.b;
-                                u2 += Mathf.Max(0f, Vector3.Dot(vector3, rhs)) / Mathf.Max(0.001f, Mathf.Sqrt(rhs.sqrMagnitude * ray.LengthSqr()));
+                                Vector3 rhs3 = segment.a - segment.b;
+                                u2 += Mathf.Max(0f, Vector3.Dot(lhs, rhs3)) / Mathf.Max(0.001f, Mathf.Sqrt(rhs3.sqrMagnitude * ray.LengthSqr()));
                             }
                             if (flag2 && i == 16 && v2 > 0.999f)
                             {
-                                Vector3 rhs2 = segment.b - segment.a;
-                                u2 += Mathf.Max(0f, Vector3.Dot(vector3, rhs2)) / Mathf.Max(0.001f, Mathf.Sqrt(rhs2.sqrMagnitude * ray.LengthSqr()));
+                                Vector3 rhs4 = segment.b - segment.a;
+                                u2 += Mathf.Max(0f, Vector3.Dot(lhs, rhs4)) / Mathf.Max(0.001f, Mathf.Sqrt(rhs4.sqrMagnitude * ray.LengthSqr()));
                             }
                             priority = num7;
                             t = u2;
                             result = true;
+                            if (num7 < num8m * num8m) isMasked = true;
                         }
                     }
-                    if (num6 < max)
-                    {
-                        float num9 = vector2.y + num6 - max;
-                        if (Mathf.Max(ray.a.y, ray.b.y) > num9 && Mathf.Min(ray.a.y, ray.b.y) < vector2.y)
-                        {
-                            float num10;
-                            if (Segment1.Intersect(ray.a.y, ray.b.y, vector2.y, out u2))
-                            {
-                                segment2.a = VectorUtils.XZ(ray.Position(u2));
-                                num10 = u2;
-                            }
-                            else
-                            {
-                                segment2.a = VectorUtils.XZ(ray.a);
-                                num10 = 0f;
-                            }
-                            float num11;
-                            if (Segment1.Intersect(ray.a.y, ray.b.y, num9, out u2))
-                            {
-                                segment2.b = VectorUtils.XZ(ray.Position(u2));
-                                num11 = u2;
-                            }
-                            else
-                            {
-                                segment2.b = VectorUtils.XZ(ray.b);
-                                num11 = 1f;
-                            }
-                            num7 = segment2.DistanceSqr(VectorUtils.XZ(vector2), out u2);
-                            if (num7 < priority && num7 < num8 * num8)
-                            {
-                                u2 = num10 + (num11 - num10) * u2;
-                                Vector3 lhs = ray.Position(u2);
-                                if (flag && i == 1 && v2 < 0.001f)
-                                {
-                                    Vector3 rhs3 = segment.a - segment.b;
-                                    u2 += Mathf.Max(0f, Vector3.Dot(lhs, rhs3)) / Mathf.Max(0.001f, Mathf.Sqrt(rhs3.sqrMagnitude * ray.LengthSqr()));
-                                }
-                                if (flag2 && i == 16 && v2 > 0.999f)
-                                {
-                                    Vector3 rhs4 = segment.b - segment.a;
-                                    u2 += Mathf.Max(0f, Vector3.Dot(lhs, rhs4)) / Mathf.Max(0.001f, Mathf.Sqrt(rhs4.sqrMagnitude * ray.LengthSqr()));
-                                }
-                                priority = num7;
-                                t = u2;
-                                result = true;
-                            }
-                        }
-                    }
-                    segment.a = segment.b;
                 }
-                priority = Mathf.Max(0f, Mathf.Sqrt(priority) - collisionHalfWidth);
+                segment.a = segment.b;
             }
+            priority = Mathf.Max(0f, Mathf.Sqrt(priority) - collisionHalfWidth);
+
+            if (isMasked) result = false; 
             return result;
         }
 
