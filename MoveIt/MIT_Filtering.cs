@@ -737,6 +737,42 @@ namespace MoveIt
             return m.Success;
         }
 
+        public static Vector3 GetNodeDir(ushort node)
+        {
+            var nm = Singleton<NetManager>.instance;
+            var m_node = nm.m_nodes.m_buffer[node];
+            for (int i = 0; i < 8; i++)
+            {
+                if (m_node.GetSegment(i) != 0)
+                {
+                    if (Singleton<NetManager>.instance.m_segments.m_buffer[m_node.GetSegment(i)].m_startNode == node)
+                    {
+                        if (Singleton<NetManager>.instance.m_segments.m_buffer[m_node.GetSegment(i)].m_flags.IsFlagSet(NetSegment.Flags.Invert))
+                        {
+                            return -Singleton<NetManager>.instance.m_segments.m_buffer[m_node.GetSegment(i)].m_startDirection;
+                        }
+                        else
+                        {
+                            return Singleton<NetManager>.instance.m_segments.m_buffer[m_node.GetSegment(i)].m_startDirection;
+                        }
+                    }
+                    else if (Singleton<NetManager>.instance.m_segments.m_buffer[m_node.GetSegment(i)].m_endNode == node)
+                    {
+                        if (Singleton<NetManager>.instance.m_segments.m_buffer[m_node.GetSegment(i)].m_flags.IsFlagSet(NetSegment.Flags.Invert))
+                        {
+                            return Singleton<NetManager>.instance.m_segments.m_buffer[m_node.GetSegment(i)].m_endDirection;
+                        }
+                        else
+                        {
+                            return -Singleton<NetManager>.instance.m_segments.m_buffer[m_node.GetSegment(i)].m_endDirection;
+                        }
+                    }
+                }
+            }
+
+            return Vector3.zero;
+        }
+
         private static bool RayCastNodeMasked(ushort nodeid, ref NetNode node, Segment3 ray, float snapElevation, bool bothSides, out float t, out float priority)
         {
             bool lht = false;

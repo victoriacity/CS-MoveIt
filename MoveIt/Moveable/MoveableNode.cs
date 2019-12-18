@@ -487,11 +487,28 @@ namespace MoveIt
             NetManager netManager = NetManager.instance;
             NetInfo netInfo = nodeBuffer[node].Info;
             Vector3 position = nodeBuffer[node].m_position;
+            // NON-STOCK CODE STARTS
+            if (MoveItTool.IsCSUROffset(netInfo))
+            {
+                var tmpDir = MoveItTool.GetNodeDir(node);
+                tmpDir = new Vector3(tmpDir.z, tmpDir.y, -tmpDir.x);
+                position = tmpDir * (netInfo.m_halfWidth + netInfo.m_pavementWidth) / 2f + position;
+            }
+            // NON-STOCK CODE ENDS
             Randomizer randomizer = new Randomizer(node);
             float alpha = 1f;
             NetTool.CheckOverlayAlpha(netInfo, ref alpha);
             toolColor.a *= alpha;
-            RenderManager.instance.OverlayEffect.DrawCircle(cameraInfo, toolColor, position, Mathf.Max(6f, netInfo.m_halfWidth * 2f), -1f, 1280f, false, true);
+            // NON-STOCK CODE STARTS
+            if (MoveItTool.IsCSUROffset(netInfo))
+            {
+                RenderManager.instance.OverlayEffect.DrawCircle(cameraInfo, toolColor, position, Mathf.Max(6f, netInfo.m_halfWidth - netInfo.m_pavementWidth), -1f, 1280f, false, true);
+            }
+            else
+            {
+                RenderManager.instance.OverlayEffect.DrawCircle(cameraInfo, toolColor, position, Mathf.Max(6f, netInfo.m_halfWidth * 2f), -1f, 1280f, false, true);
+            }
+            // NON-STOCK CODE ENDS
         }
 
         public override void RenderCloneOverlay(InstanceState state, ref Matrix4x4 matrix4x, Vector3 deltaPosition, float deltaAngle, Vector3 center, bool followTerrain, RenderManager.CameraInfo cameraInfo, Color toolColor) { }
