@@ -717,7 +717,7 @@ namespace MoveIt
 
         public static bool IsCSUR(NetInfo asset)
         {
-            if (asset == null || asset.m_netAI.GetType() != typeof(RoadAI))
+            if (asset == null || (asset.m_netAI.GetType() != typeof(RoadAI) && asset.m_netAI.GetType() != typeof(RoadBridgeAI) && asset.m_netAI.GetType() != typeof(RoadTunnelAI)))
             {
                 return false;
             }
@@ -728,7 +728,7 @@ namespace MoveIt
 
         public static bool IsCSUROffset(NetInfo asset)
         {
-            if (asset == null || asset.m_netAI.GetType() != typeof(RoadAI))
+            if (asset == null || (asset.m_netAI.GetType() != typeof(RoadAI) && asset.m_netAI.GetType() != typeof(RoadBridgeAI) && asset.m_netAI.GetType() != typeof(RoadTunnelAI)))
             {
                 return false;
             }
