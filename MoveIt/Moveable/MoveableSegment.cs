@@ -331,13 +331,42 @@ namespace MoveIt
             Bezier3 bezier;
             bezier.a = nodeBuffer[startNode].m_position;
             bezier.d = nodeBuffer[endNode].m_position;
+            // NON-STOCK CODE STARTS
+            if (MoveItTool.IsCSUROffset(netInfo))
+            {
+                var tmpDir = segmentBuffer[segment].m_startDirection;
+                if ((segmentBuffer[segment].m_flags & NetSegment.Flags.Invert) != NetSegment.Flags.None)
+                {
+                    tmpDir = -tmpDir;
+                }
+                tmpDir = new Vector3(tmpDir.z, tmpDir.y, -tmpDir.x);
+                bezier.a = tmpDir * (netInfo.m_halfWidth + netInfo.m_pavementWidth) / 2f + bezier.a;
+
+                tmpDir = segmentBuffer[segment].m_endDirection;
+                if ((segmentBuffer[segment].m_flags & NetSegment.Flags.Invert) != NetSegment.Flags.None)
+                {
+                    tmpDir = -tmpDir;
+                }
+                tmpDir = new Vector3(-tmpDir.z, tmpDir.y, tmpDir.x);
+                bezier.d = tmpDir * (netInfo.m_halfWidth + netInfo.m_pavementWidth) / 2f + bezier.d;
+            }
+            // NON-STOCK CODE ENDS
 
             NetSegment.CalculateMiddlePoints(
                 bezier.a, segmentBuffer[segment].m_startDirection,
                 bezier.d, segmentBuffer[segment].m_endDirection,
                 smoothStart, smoothEnd, out bezier.b, out bezier.c);
 
-            RenderManager.instance.OverlayEffect.DrawBezier(cameraInfo, toolColor, bezier, netInfo.m_halfWidth * 4f / 3f, 100000f, -100000f, -1f, 1280f, false, true);
+            // NON-STOCK CODE STARTS
+            if (MoveItTool.IsCSUROffset(netInfo))
+            {
+                RenderManager.instance.OverlayEffect.DrawBezier(cameraInfo, toolColor, bezier, (netInfo.m_halfWidth - netInfo.m_pavementWidth) * 4f / 3f, 100000f, -100000f, -1f, 1280f, false, true);                
+            }
+            else
+            {
+                RenderManager.instance.OverlayEffect.DrawBezier(cameraInfo, toolColor, bezier, netInfo.m_halfWidth * 4f / 3f, 100000f, -100000f, -1f, 1280f, false, true);
+            }
+            // NON-STOCK CODE ENDS
 
             Segment3 segment1, segment2;
 
@@ -347,10 +376,48 @@ namespace MoveIt
             segment1.b = GetControlPoint(segment);
             segment2.b = segment1.b;
 
+            // NON-STOCK CODE STARTS
+            if (MoveItTool.IsCSUROffset(netInfo))
+            {
+                var tmpDir = segmentBuffer[segment].m_startDirection;
+                if ((segmentBuffer[segment].m_flags & NetSegment.Flags.Invert) != NetSegment.Flags.None)
+                {
+                    tmpDir = -tmpDir;
+                }
+                tmpDir = new Vector3(tmpDir.z, tmpDir.y, -tmpDir.x);
+                segment1.a = tmpDir * (netInfo.m_halfWidth + netInfo.m_pavementWidth) / 2f + segment1.a;
+
+                tmpDir = segmentBuffer[segment].m_endDirection;
+                if ((segmentBuffer[segment].m_flags & NetSegment.Flags.Invert) != NetSegment.Flags.None)
+                {
+                    tmpDir = -tmpDir;
+                }
+                tmpDir = new Vector3(-tmpDir.z, tmpDir.y, tmpDir.x);
+                segment2.a = tmpDir * (netInfo.m_halfWidth + netInfo.m_pavementWidth) / 2f + segment2.a;
+
+                tmpDir = (segmentBuffer[segment].m_startDirection - segmentBuffer[segment].m_endDirection) / 2;
+                if ((segmentBuffer[segment].m_flags & NetSegment.Flags.Invert) != NetSegment.Flags.None)
+                {
+                    tmpDir = -tmpDir;
+                }
+                tmpDir = new Vector3(tmpDir.z, tmpDir.y, -tmpDir.x);
+                segment1.b = tmpDir * (netInfo.m_halfWidth + netInfo.m_pavementWidth) / 2f + segment1.b;
+                segment2.b = segment1.b;
+            }
+            // NON-STOCK CODE ENDS
             toolColor.a = toolColor.a / 2;
 
             RenderManager.instance.OverlayEffect.DrawSegment(cameraInfo, toolColor, segment1, segment2, 0, 10f, -1f, 1280f, false, true);
-            RenderManager.instance.OverlayEffect.DrawCircle(cameraInfo, toolColor, segment1.b, netInfo.m_halfWidth / 2f, -1f, 1280f, false, true);
+            // NON-STOCK CODE STARTS
+            if (MoveItTool.IsCSUROffset(netInfo))
+            {
+                RenderManager.instance.OverlayEffect.DrawCircle(cameraInfo, toolColor, segment1.b, (netInfo.m_halfWidth - netInfo.m_pavementWidth) / 2f, -1f, 1280f, false, true);
+            }
+            else
+            {
+                RenderManager.instance.OverlayEffect.DrawCircle(cameraInfo, toolColor, segment1.b, netInfo.m_halfWidth / 2f, -1f, 1280f, false, true);
+            }
+            // NON-STOCK CODE ENDS
         }
 
         public override void RenderCloneOverlay(InstanceState instanceState, ref Matrix4x4 matrix4x, Vector3 deltaPosition, float deltaAngle, Vector3 center, bool followTerrain, RenderManager.CameraInfo cameraInfo, Color toolColor)

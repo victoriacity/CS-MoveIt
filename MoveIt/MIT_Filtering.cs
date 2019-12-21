@@ -717,7 +717,7 @@ namespace MoveIt
 
         public static bool IsCSUR(NetInfo asset)
         {
-            if (asset == null || asset.m_netAI.GetType() != typeof(RoadAI))
+            if (asset == null || (asset.m_netAI.GetType() != typeof(RoadAI) && asset.m_netAI.GetType() != typeof(RoadBridgeAI) && asset.m_netAI.GetType() != typeof(RoadTunnelAI)))
             {
                 return false;
             }
@@ -728,13 +728,49 @@ namespace MoveIt
 
         public static bool IsCSUROffset(NetInfo asset)
         {
-            if (asset == null || asset.m_netAI.GetType() != typeof(RoadAI))
+            if (asset == null || (asset.m_netAI.GetType() != typeof(RoadAI) && asset.m_netAI.GetType() != typeof(RoadBridgeAI) && asset.m_netAI.GetType() != typeof(RoadTunnelAI)))
             {
                 return false;
             }
             string savenameStripped = asset.name.Substring(asset.name.IndexOf('.') + 1);
             Match m = Regex.Match(savenameStripped, CSUR_OFFSET_REGEX, RegexOptions.IgnoreCase);
             return m.Success;
+        }
+
+        public static Vector3 GetNodeDir(ushort node)
+        {
+            var nm = Singleton<NetManager>.instance;
+            var m_node = nm.m_nodes.m_buffer[node];
+            for (int i = 0; i < 8; i++)
+            {
+                if (m_node.GetSegment(i) != 0)
+                {
+                    if (Singleton<NetManager>.instance.m_segments.m_buffer[m_node.GetSegment(i)].m_startNode == node)
+                    {
+                        if (Singleton<NetManager>.instance.m_segments.m_buffer[m_node.GetSegment(i)].m_flags.IsFlagSet(NetSegment.Flags.Invert))
+                        {
+                            return -Singleton<NetManager>.instance.m_segments.m_buffer[m_node.GetSegment(i)].m_startDirection;
+                        }
+                        else
+                        {
+                            return Singleton<NetManager>.instance.m_segments.m_buffer[m_node.GetSegment(i)].m_startDirection;
+                        }
+                    }
+                    else if (Singleton<NetManager>.instance.m_segments.m_buffer[m_node.GetSegment(i)].m_endNode == node)
+                    {
+                        if (Singleton<NetManager>.instance.m_segments.m_buffer[m_node.GetSegment(i)].m_flags.IsFlagSet(NetSegment.Flags.Invert))
+                        {
+                            return Singleton<NetManager>.instance.m_segments.m_buffer[m_node.GetSegment(i)].m_endDirection;
+                        }
+                        else
+                        {
+                            return -Singleton<NetManager>.instance.m_segments.m_buffer[m_node.GetSegment(i)].m_endDirection;
+                        }
+                    }
+                }
+            }
+
+            return Vector3.zero;
         }
 
         private static bool RayCastNodeMasked(ushort nodeid, ref NetNode node, Segment3 ray, float snapElevation, bool bothSides, out float t, out float priority)
